@@ -39,10 +39,20 @@ def hgt_to_geotif(hgt_path: pathlib.Path, geotif_path: pathlib.Path):
 
 def hgt_to_geotif_ellipsoidal(hgt_path: pathlib.Path, geotif_path: pathlib.Path):
     """Convert hgt to geotiff using gdal_translate."""
-    geotif_path = geotif_path.parent / f"{geotif_path.stem}_wgs84ellps{geotif_path.suffix}"
+    geotif_path = (
+        geotif_path.parent / f"{geotif_path.stem}_wgs84ellps{geotif_path.suffix}"
+    )
     logger.info(f"Converting {hgt_path} inti {geotif_path}")
     subprocess.run(
-        ["gdalwarp", "-s_srs", "+proj=longlat +datum=WGS84 +geoidgrids=us_nga_egm96_15.tif +vunits=m +no_defs +type=crs", "-t_srs", "EPSG:4326", str(hgt_path), str(geotif_path)],
+        [
+            "gdalwarp",
+            "-s_srs",
+            "+proj=longlat +datum=WGS84 +geoidgrids=us_nga_egm96_15.tif +vunits=m +no_defs +type=crs",
+            "-t_srs",
+            "EPSG:4326",
+            str(hgt_path),
+            str(geotif_path),
+        ],
     )
 
 
@@ -92,7 +102,9 @@ def process_file(
             zip_ref.extractall(str(target_path.parent))
         target_path.unlink()
         geotiff_path = (
-            target_path.parent / "geotiff" / unzipped_file_path.with_suffix(".tiff").name
+            target_path.parent
+            / "geotiff"
+            / unzipped_file_path.with_suffix(".tiff").name
         )
         geotiff_path.parent.mkdir(parents=True, exist_ok=True)
         if ellipsoidal:
@@ -167,6 +179,10 @@ if __name__ == "__main__":
         help="During converting to GoeTiff files will be projected to the ellipsoidal height.",
         action="store_true",
     )
+    parser.add_argument(
+        "--threads-count", "-tc", help="How much treads to use", type=int, default=1
+    )
+
     args = parser.parse_args()
     target_folder = pathlib.Path(args.target)
     target_folder.mkdir(parents=True, exist_ok=True)
@@ -178,4 +194,5 @@ if __name__ == "__main__":
         args.password,
         convert=args.convert_to_geotif,
         ellipsoidal=args.ellipsoidal,
+        threads_count=args.threads_count,
     )

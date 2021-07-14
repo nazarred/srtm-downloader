@@ -121,16 +121,29 @@ def download(
     threads_count: int = 10,
     convert: bool = False,
     ellipsoidal: bool = False,
+    skip: bool = False,
 ):
     """Download all SRTM files."""
     features = []
     geo_json_list = json.loads(geo_json_path.read_text())["features"]
     total = len(geo_json_list)
     count = 0
+
+    prefixes_to_ignore = set()
+    if skip:
+        prefixes_to_ignore = set(
+            [f.name.split(".")[0] for f in target_folder.iterdir()]
+        )
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads_count) as executor:
         for tile_data in geo_json_list:
             file_name = tile_data["properties"]["dataFile"]
             target_path = target_folder / file_name
+            if skip:
+                prefix_to_skip = target_path.name.split(".")[0]
+                if prefix_to_skip in prefixes_to_ignore:
+                    logger.info(f"Skipping {file_name}")
+                    continue
             url = f"{BASE_URL}/{file_name}"
             logger.info(f"Downloading {url} into {target_path}")
             count += 1
@@ -183,6 +196,13 @@ if __name__ == "__main__":
         "--threads-count", "-tc", help="How much treads to use", type=int, default=1
     )
 
+    parser.add_argument(
+        "--skip-if-exist",
+        "-se",
+        help="Skip downloading if file exist",
+        action="store_true",
+    )
+
     args = parser.parse_args()
     target_folder = pathlib.Path(args.target)
     target_folder.mkdir(parents=True, exist_ok=True)
@@ -195,4 +215,5 @@ if __name__ == "__main__":
         convert=args.convert_to_geotif,
         ellipsoidal=args.ellipsoidal,
         threads_count=args.threads_count,
+        skip=args.skip_if_exist,
     )

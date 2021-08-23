@@ -6,6 +6,8 @@ import sys
 import zipfile
 import subprocess
 import concurrent.futures
+
+from bs4 import BeautifulSoup
 from requests.auth import HTTPBasicAuth
 import requests
 import json
@@ -20,8 +22,9 @@ logger.addHandler(handler)
 
 # was found here https://dwtkns.com/srtm30m/srtm30m_bounding_boxes.json
 SRTM_GEOJSON_PATH = "geo.json"
-BASE_URL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11"
-
+BASE_SRTM_URL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11"
+ASTER_DATA_INDEX_URL = "https://e4ftl01.cr.usgs.gov/ASTT/ASTGTM.003/2000.03.01"
+BASE_ASTER_URL = "https://e4ftl01.cr.usgs.gov/ASTT/ASTGTM.003/2000.03.01"
 
 class DownloadException(Exception):
     """Custom exception which could be thrown during the downloading."""
@@ -37,12 +40,12 @@ def hgt_to_geotif(hgt_path: pathlib.Path, geotif_path: pathlib.Path):
     )
 
 
-def hgt_to_geotif_ellipsoidal(hgt_path: pathlib.Path, geotif_path: pathlib.Path):
-    """Convert hgt to geotiff using gdal_translate."""
-    geotif_path = (
-        geotif_path.parent / f"{geotif_path.stem}_wgs84ellps{geotif_path.suffix}"
+def hgt_tif_to_geotif_ellipsoidal(input_path: pathlib.Path, output_path: pathlib.Path):
+    """Re-project hgt/tif to ellipsoidal geotiff using gdalwarp."""
+    output_path = (
+            output_path.parent / f"{output_path.stem}_wgs84ellps{output_path.suffix}"
     )
-    logger.info(f"Converting {hgt_path} inti {geotif_path}")
+    logger.info(f"Converting {input_path} inti {output_path}")
     subprocess.run(
         [
             "gdalwarp",
@@ -50,8 +53,8 @@ def hgt_to_geotif_ellipsoidal(hgt_path: pathlib.Path, geotif_path: pathlib.Path)
             "+proj=longlat +datum=WGS84 +geoidgrids=us_nga_egm96_15.tif +vunits=m +no_defs +type=crs",
             "-t_srs",
             "EPSG:4326",
-            str(hgt_path),
-            str(geotif_path),
+            str(input_path),
+            str(output_path),
         ],
     )
 
@@ -78,12 +81,14 @@ def download_file(url: str, target_path: pathlib.Path, username: str, password: 
 
 def process_file(
     url: str,
+    data_type: str,
     target_path: pathlib.Path,
     username: str,
     password: str,
     count: int,
     total: int,
     convert: bool = False,
+    unzip: bool = False,
     ellipsoidal: bool = False,
 ):
     try:
@@ -95,38 +100,48 @@ def process_file(
         logger.error(f"Target file does not exist {target_path}")
         return
     logger.info(f"Downloaded ({count}/{total}) {url} into {target_path}")
-    if convert:
+    if unzip or convert or ellipsoidal:
+        geotiff_folder = target_path.parent / "geotiff"
+        geotiff_folder.parent.mkdir(parents=True, exist_ok=True)
+
         # firstly we need to unzip the file
         with zipfile.ZipFile(str(target_path), "r") as zip_ref:
-            unzipped_file_path = target_path.parent / zip_ref.filelist[0].filename
-            zip_ref.extractall(str(target_path.parent))
+            if data_type == "srtm":
+                unzipped_file_path = target_path.parent / zip_ref.filelist[0].filename
+                zip_ref.extractall(str(target_path.parent))
+            else:
+                dem_files = [f.filename for f in zip_ref.filelist if "_dem" in f.filename]
+                if not dem_files:
+                    logger.error(f'Failed to find the DEM file in {target_path}')
+                    return
+                unzipped_file_path = geotiff_folder / dem_files[0]
+                zip_ref.extractall(str(geotiff_folder))
+
         target_path.unlink()
-        geotiff_path = (
-            target_path.parent
-            / "geotiff"
-            / unzipped_file_path.with_suffix(".tiff").name
-        )
-        geotiff_path.parent.mkdir(parents=True, exist_ok=True)
         if ellipsoidal:
-            hgt_to_geotif_ellipsoidal(unzipped_file_path, geotiff_path)
-        else:
+            geotiff_path = geotiff_folder / "ellipsoidal" / unzipped_file_path.name
+            geotiff_path.parent.mkdir(parents=True, exist_ok=True)
+            hgt_tif_to_geotif_ellipsoidal(unzipped_file_path, geotiff_path)
+        elif convert and data_type == "srtm":
+            geotiff_path = geotiff_folder / unzipped_file_path.with_suffix(".tiff").name
             hgt_to_geotif(unzipped_file_path, geotiff_path)
 
 
 def download(
     target_folder: pathlib.Path,
-    geo_json_path: pathlib.Path,
+    links: set,
+    data_type: str,
     username: str,
     password: str,
     threads_count: int = 10,
     convert: bool = False,
     ellipsoidal: bool = False,
+    unzip: bool = False,
     skip: bool = False,
 ):
     """Download all SRTM files."""
     features = []
-    geo_json_list = json.loads(geo_json_path.read_text())["features"]
-    total = len(geo_json_list)
+    total = len(links)
     count = 0
 
     prefixes_to_ignore = set()
@@ -136,28 +151,52 @@ def download(
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads_count) as executor:
-        for tile_data in geo_json_list:
-            file_name = tile_data["properties"]["dataFile"]
+        for link in links:
+            file_name = pathlib.Path(link).name
             target_path = target_folder / file_name
             if skip:
                 prefix_to_skip = target_path.name.split(".")[0]
                 if prefix_to_skip in prefixes_to_ignore:
                     logger.info(f"Skipping {file_name}")
                     continue
-            url = f"{BASE_URL}/{file_name}"
-            logger.info(f"Downloading {url} into {target_path}")
+            logger.info(f"Downloading {link} into {target_path}")
             count += 1
             executor.submit(
                 process_file,
-                url,
+                link,
+                data_type,
                 target_path,
                 username,
                 password,
                 count,
                 total,
                 convert,
+                unzip,
                 ellipsoidal,
             )
+
+
+def parse_aster_links() -> set:
+    logger.info(f'Fetching ASTER data links from {ASTER_DATA_INDEX_URL}')
+    r = requests.get(ASTER_DATA_INDEX_URL)
+    soup = BeautifulSoup(r.content, features="html.parser")
+    links = soup.select("a")
+    results = set()
+    for link in links:
+        name = link.attrs.get("href")
+        if name.lower().endswith("zip"):
+            results.add(f"{BASE_ASTER_URL}/{name}")
+    logger.info(f'Fetched {len(results)} links')
+    return results
+
+
+def parse_srtm_links(geo_json_path: pathlib.Path) -> set:
+    geo_json_list = json.loads(geo_json_path.read_text())["features"]
+    results = set()
+    for tile_data in geo_json_list:
+        file_name = tile_data["properties"]["dataFile"]
+        results.add(f"{BASE_SRTM_URL}/{file_name}")
+    return results
 
 
 if __name__ == "__main__":
@@ -180,10 +219,24 @@ if __name__ == "__main__":
         help="Password for earthdata.nasa.gov",
         required=True,
     )
+
+    parser.add_argument(
+        "--data_type",
+        "-dt",
+        help="SRTM or ASTER",
+        required=True,
+    )
+
     parser.add_argument(
         "--convert-to-geotif",
         "-gt",
-        help="Convert all files to GeoTif, required gdal to be installed!",
+        help="Convert all files to GeoTif (only for SRTM data), required gdal to be installed!",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--unzip",
+        "-uz",
+        help="Unzip downloaded data",
         action="store_true",
     )
     parser.add_argument(
@@ -207,13 +260,28 @@ if __name__ == "__main__":
     target_folder = pathlib.Path(args.target)
     target_folder.mkdir(parents=True, exist_ok=True)
 
+    data_type = args.data_type.lower()
+
+    if data_type == 'srtm':
+        links = parse_srtm_links(pathlib.Path(SRTM_GEOJSON_PATH))
+    elif data_type == 'aster':
+        links = parse_aster_links()
+        if args.convert_to_geotif:
+            logger.warning("--convert-to-geotif will be ignored "
+                           f"as ASTER data is already in TIF format")
+    else:
+        logger.error(f"Unsupported data type: {data_type}")
+        sys.exit(1)
+
     download(
         target_folder,
-        pathlib.Path(SRTM_GEOJSON_PATH),
+        list(links)[0:5],
+        data_type,
         args.username,
         args.password,
         convert=args.convert_to_geotif,
         ellipsoidal=args.ellipsoidal,
         threads_count=args.threads_count,
+        unzip=args.unzip,
         skip=args.skip_if_exist,
     )

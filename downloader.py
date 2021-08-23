@@ -275,7 +275,7 @@ if __name__ == "__main__":
 
     download(
         target_folder,
-        list(links)[0:5],
+        links,
         data_type,
         args.username,
         args.password,

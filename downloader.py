@@ -147,7 +147,7 @@ def download(
     prefixes_to_ignore = set()
     if skip:
         prefixes_to_ignore = set(
-            [f.name.split(".")[0] for f in target_folder.iterdir()]
+            [f.name.split(".")[0] for f in (target_folder / "geotiff" / "ellipsoidal").iterdir()]
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads_count) as executor:

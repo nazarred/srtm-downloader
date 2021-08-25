@@ -145,9 +145,10 @@ def download(
     count = 0
 
     prefixes_to_ignore = set()
+    (target_folder / "geotiff" / "ellipsoidal").mkdir(parents=True, exist_ok=True)
     if skip:
         prefixes_to_ignore = set(
-            [f.name.split(".")[0] for f in (target_folder / "geotiff" / "ellipsoidal").iterdir()]
+            [f.name.split(".")[0].replace("_dem_wgs84ellps", "") for f in (target_folder / "geotiff" / "ellipsoidal").iterdir()]
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads_count) as executor:

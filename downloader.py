@@ -217,7 +217,7 @@ def download(
     (target_folder / "geotiff" / "ellipsoidal").mkdir(parents=True, exist_ok=True)
     if skip:
         prefixes_to_ignore = set([
-            f.name.split(".")[0].replace("_dem_wgs84ellps", "")
+            f.name.split(".")[0].replace("_wgs84ellps", "")
             for f in (target_folder / "geotiff" / "ellipsoidal").iterdir()
         ])
 

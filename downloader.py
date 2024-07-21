@@ -193,6 +193,7 @@ def process_file(
         elif convert and data_type == "srtm":
             geotiff_path = geotiff_folder / unzipped_file_path.with_suffix(".tiff").name
             hgt_to_geotif(unzipped_file_path, geotiff_path)
+    logger.info(f"Processed {count}/{total}")
 
 
 def download(

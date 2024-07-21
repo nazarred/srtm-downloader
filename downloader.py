@@ -105,7 +105,7 @@ def convert_copernicus(input_path: pathlib.Path, output_path: pathlib.Path):
             str(output_path),
         ],
     )
-    output_path.unlink()
+    output_path_tif.unlink()
 
 
 def download_file(url: str, target_path: pathlib.Path, username: str, password: str):
@@ -217,7 +217,7 @@ def download(
     (target_folder / "geotiff" / "ellipsoidal").mkdir(parents=True, exist_ok=True)
     if skip:
         prefixes_to_ignore = set([
-            f.name.split(".")[0].replace("_wgs84ellps", "")
+            f.name.split(".")[0].lower().replace("_dem_wgs84ellps", "")
             for f in (target_folder / "geotiff" / "ellipsoidal").iterdir()
         ])
 
@@ -227,7 +227,7 @@ def download(
             target_path = target_folder / file_name
             if skip:
                 prefix_to_skip = target_path.name.split(".")[0]
-                if prefix_to_skip in prefixes_to_ignore:
+                if prefix_to_skip.lower() in prefixes_to_ignore:
                     logger.info(f"Skipping {file_name}")
                     continue
             logger.info(f"Downloading {link} into {target_path}")
